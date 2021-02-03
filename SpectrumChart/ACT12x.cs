@@ -15,6 +15,11 @@ namespace SpectrumChart
         {
         }
 
+        public virtual string  GetIP()
+        {
+            return "";
+        }
+
         public virtual void SetUpdateChart(bool update) { }
 
     }

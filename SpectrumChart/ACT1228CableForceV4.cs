@@ -16,7 +16,6 @@ using System.Windows.Forms;
 using System.Windows.Forms.DataVisualization.Charting;
 using System.Data.SQLite;
 using StackExchange.Redis;
-using MsgPack.Serialization;
 
 namespace SpectrumChart
 {
@@ -24,11 +23,11 @@ namespace SpectrumChart
     {
         private static readonly log4net.ILog log = log4net.LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
         private string ip;
+        private string localIP;
         private int udpPort;
         private ConcurrentQueue<float[]> dataQueue;
         private ConcurrentQueue<float[]> uiQueue;
         private ConcurrentQueue<string> rawQueue;
-        private ConcurrentQueue<DataValue> resultQueue;
         private BackgroundWorker backgroundWorkerProcessData;
         private BackgroundWorker backgroundWorkerUpdateUI;
         private BackgroundWorker backgroundWorkerReceiveData;
@@ -36,10 +35,9 @@ namespace SpectrumChart
         private ConnectionMultiplexer redis;
         private double Threshold;
         private UdpClient udpClient;
-        private UdpClient udpSendWave;
         private TextBox textBoxLog;
         private IWindow window;
-        private const int WindowSize = 2048;
+        private const int WindowSize = 512;
         private Chart chart1;
         private string deviceType;
         private Dictionary<int, VibrateChannel> vibrateChannels;
@@ -51,18 +49,14 @@ namespace SpectrumChart
         private string database;
         private string deviceId;
 
-        private string spectrumIP;
-        private int spectrumPort;
-
         private bool isUpdateChart;
         private bool isCalculateCableForce;
         private bool isSaveRawData;
         private IDatabase db;
-        private MessagePackSerializer serializer;
         //
         private string Tag;
 
-        public ACT1228CableForceV4(string id, string ip, int port, Chart chart, string deviceType, string path, string database, TextBox tb, double threshold, ConnectionMultiplexer redis, string spectrumIP, int spectrumPort)
+        public ACT1228CableForceV4(string id, string ip, string localIP, int port, Chart chart, string deviceType, string path, string database, TextBox tb, double threshold, ConnectionMultiplexer redis)
         {
             this.Tag = ip + " : ";
             dataQueue = new ConcurrentQueue<float[]>();
@@ -74,8 +68,6 @@ namespace SpectrumChart
             backgroundWorkerReceiveData = new BackgroundWorker();
             backgroundWorkerUpdateUI = new BackgroundWorker();
             backgroundWorkerSaveRawData = new BackgroundWorker();
-
-            serializer = MessagePackSerializer.Get<AccWave>();
 
             backgroundWorkerProcessData.WorkerSupportsCancellation = true;
             backgroundWorkerProcessData.DoWork += BackgroundWorkerProcessData_DoWork;
@@ -99,6 +91,7 @@ namespace SpectrumChart
             window = RaisedCosineWindow.Hann(WindowSize);
 
             this.ip = ip;
+            this.localIP = localIP;
             this.deviceId = id;
             this.deviceType = deviceType;
             this.udpPort = port;
@@ -106,10 +99,6 @@ namespace SpectrumChart
             this.textBoxLog = tb;
             this.basePath = path;
             this.database = database;
-            //this.spectrumIP = spectrumIP;
-            //this.spectrumPort = int.Parse(spectrumPort);
-            this.spectrumIP = spectrumIP;
-            this.spectrumPort = spectrumPort; 
             this.isUpdateChart = false;
             this.vibrateChannels = new Dictionary<int, VibrateChannel>();
 
@@ -149,12 +138,15 @@ namespace SpectrumChart
             return result;
         }
 
+        public override string GetIP()
+        {
+            return this.ip;
+        }
+
         public override void Start()
         {
-            IPEndPoint endPoint = new IPEndPoint(IPAddress.Parse(ip), udpPort);
-            udpClient = new UdpClient(udpPort);
-            //udpClient = new UdpClient(endPoint);
-            //udpSendWave = new UdpClient("182.245.124.106", 9002);
+            IPEndPoint iPEndPoint = new IPEndPoint(IPAddress.Parse(this.localIP), this.udpPort);
+            udpClient = new UdpClient(iPEndPoint);
             backgroundWorkerUpdateUI.RunWorkerAsync();
             backgroundWorkerProcessData.RunWorkerAsync();
             backgroundWorkerReceiveData.RunWorkerAsync();
@@ -166,12 +158,11 @@ namespace SpectrumChart
 
         public override void Stop()
         {
+            udpClient.Close();
             backgroundWorkerUpdateUI.CancelAsync();
             backgroundWorkerProcessData.CancelAsync();
             backgroundWorkerReceiveData.CancelAsync();
             //backgroundWorkerSaveRawData.CancelAsync();
-            udpClient.Close();
-            //udpSendWave.Close();
             hourTimer.Stop();
         }
 
@@ -186,9 +177,15 @@ namespace SpectrumChart
         {
             isSaveRawData = false;
 
+            string parent = Path.Combine(this.basePath, this.ip);
+            if (!Directory.Exists(parent))
+            {
+                Directory.CreateDirectory(parent);
+            }
+
             string line;
-            string fileName = DateTime.Now.ToString("yyyy-MM-dd-HH-mm")+".csv";
-            string pathString = Path.Combine(basePath, fileName);
+            string fileName = DateTime.Now.ToString("yyyy-MM-dd-HH-mm") + ".csv";
+            string pathString = Path.Combine(parent, fileName);
             StreamWriter sw = new StreamWriter(pathString, true);
 
             for (int i = 0; i < rawQueue.Count; i++)
@@ -258,23 +255,6 @@ namespace SpectrumChart
         private void BackgroundWorkerUpdateUI_DoWork(object sender, DoWorkEventArgs e)
         {
             BackgroundWorker bgWorker = sender as BackgroundWorker;
-
-
-
-            //MessagePackSerializer serializer = MessagePackSerializer.Get<AccWave>();
-
-            //UdpClient udpClient = null;
-            //IPAddress remoteIp = IPAddress.Parse("182.245.124.106");
-            //try
-            //{
-            //    udpClient = new UdpClient();
-            //    udpClient.Connect(remoteIp, 9002);
-            //}
-            //catch (Exception ex)
-            //{
-            //    Console.WriteLine(ex.ToString());
-            //    //MessageBox.Show(ex.ToString());
-            //}
 
             while (true)
             {
@@ -624,13 +604,13 @@ namespace SpectrumChart
 
             string content = stamp + ",";
             
-            IPAddress remoteIp = IPAddress.Parse(this.spectrumIP);
-            //int port = int.Parse(this.spectrumPort);
-            IPEndPoint remoteEndPoint = new IPEndPoint(remoteIp, this.spectrumPort);
-            UdpClient udpClient = new UdpClient();
-            Dictionary<RedisKey, RedisValue> pair = new Dictionary<RedisKey, RedisValue>();
+            //IPAddress remoteIp = IPAddress.Parse(this.spectrumIP);
+            ////int port = int.Parse(this.spectrumPort);
+            //IPEndPoint remoteEndPoint = new IPEndPoint(remoteIp, this.spectrumPort);
+            //UdpClient udpClient = new UdpClient();
+            //Dictionary<RedisKey, RedisValue> pair = new Dictionary<RedisKey, RedisValue>();
 
-            IDatabase db_result = this.redis.GetDatabase(5);
+            //IDatabase db_result = this.redis.GetDatabase(5);
 
             for (int i = 0; i < signal.Channels; i++)
             {
@@ -640,6 +620,12 @@ namespace SpectrumChart
 
                 // zero DC
                 power[i][0] = 0;
+
+                //test log
+                //for (int n = 0; n < power[i].Length; n++)
+                //{
+                //    power[i][n] = Math.Log10(power[i][n]+0.0000000001);
+                //}
 
                 double max = power[i].Max();
                 int position = Array.IndexOf(power[i], max);
@@ -723,74 +709,74 @@ namespace SpectrumChart
 
                 //AppendLog("Channel " + (i + 1).ToString() + " ");
                 //if ((i + 1) == (int)numericUpDownChannel.Value)
-                {
-                    //AppendLog("Channel " + (i + 1).ToString() + " f1: " + frequency1.ToString() + " f2: " + frequency2.ToString() + " Fundamental frequency:" + frequency.ToString());
+                //{
+                //    //AppendLog("Channel " + (i + 1).ToString() + " f1: " + frequency1.ToString() + " f2: " + frequency2.ToString() + " Fundamental frequency:" + frequency.ToString());
 
-                    if (frequency != 0)
-                    {
-                        //string stamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-                        string str = "";
-                        str += stamp + " ";
-                        if (redis.IsConnected)
-                        {
+                //    if (frequency != 0)
+                //    {
+                //        //string stamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+                //        string str = "";
+                //        str += stamp + " ";
+                //        if (redis.IsConnected)
+                //        {
 
-                        }
-                        else
-                        {
-                            str += "redis server is not connected";
-                            //lthis.AppendLog(str);
-                            return;
-                        }
+                //        }
+                //        else
+                //        {
+                //            str += "redis server is not connected";
+                //            //lthis.AppendLog(str);
+                //            return;
+                //        }
 
-                        if (vibrateChannels.ContainsKey(i + 1))
-                        {
-                            double force = 0;
-                            VibrateChannel vc = vibrateChannels[i+1];
-                            force = Math.Round(CalculateCableForce(vc, frequency) / 1000);
+                //        if (vibrateChannels.ContainsKey(i + 1))
+                //        {
+                //            double force = 0;
+                //            VibrateChannel vc = vibrateChannels[i+1];
+                //            force = Math.Round(CalculateCableForce(vc, frequency) / 1000);
 
-                            string key = vc.SensorId + "-012";
-                            DataValue dv = new DataValue();
-                            dv.SensorId = vc.SensorId;
-                            dv.TimeStamp = stamp;
-                            dv.ValueType = "012";
-                            dv.Value = frequency;
+                //            string key = vc.SensorId + "-012";
+                //            DataValue dv = new DataValue();
+                //            dv.SensorId = vc.SensorId;
+                //            dv.TimeStamp = stamp;
+                //            dv.ValueType = "012";
+                //            dv.Value = frequency;
 
-                            //resultQueue.Enqueue(dv);
+                //            //resultQueue.Enqueue(dv);
 
-                            string result = JsonConvert.SerializeObject(dv);
+                //            string result = JsonConvert.SerializeObject(dv);
 
-                            pair[key] = result;
+                //            pair[key] = result;
 
-                            if (force != 0)
-                            {
-                                key = vc.SensorId + "-013";
-                                DataValue dv1 = new DataValue();
-                                dv1.SensorId = vc.SensorId;
-                                dv1.TimeStamp = stamp;
-                                dv1.ValueType = "013";
-                                dv1.Value = force;
+                //            if (force != 0)
+                //            {
+                //                key = vc.SensorId + "-013";
+                //                DataValue dv1 = new DataValue();
+                //                dv1.SensorId = vc.SensorId;
+                //                dv1.TimeStamp = stamp;
+                //                dv1.ValueType = "013";
+                //                dv1.Value = force;
 
-                                string result1 = JsonConvert.SerializeObject(dv1);
-                                pair[key] = result;
+                //                string result1 = JsonConvert.SerializeObject(dv1);
+                //                pair[key] = result;
 
-                                //resultQueue.Enqueue(dv1);
-                            }
+                //                //resultQueue.Enqueue(dv1);
+                //            }
 
-                            AppendLog("Channel " + (i + 1).ToString() + " frequency: " + frequency.ToString() + " Cable Force: " + force.ToString());
+                //            AppendLog("Channel " + (i + 1).ToString() + " frequency: " + frequency.ToString() + " Cable Force: " + force.ToString());
 
-                        }
-                    }
-                }
+                //        }
+                //    }
+                //}
             }
 
-            if (pair.Count > 0)
-            {
-                db_result.StringSet(pair.ToArray());
-                pair.Clear();
-            }
+            //if (pair.Count > 0)
+            //{
+            //    db_result.StringSet(pair.ToArray());
+            //    pair.Clear();
+            //}
 
-            content = content.Remove(content.Length - 1);
-            udpClient.Close();
+            //content = content.Remove(content.Length - 1);
+            //udpClient.Close();
             //AppendResult(content);
 
             //return;

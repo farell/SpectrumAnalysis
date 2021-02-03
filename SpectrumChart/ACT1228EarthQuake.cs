@@ -15,7 +15,6 @@ using System.Threading;
 using System.Windows.Forms;
 using System.Windows.Forms.DataVisualization.Charting;
 using System.Data.SQLite;
-using MsgPack.Serialization;
 
 namespace SpectrumChart
 {
@@ -23,6 +22,7 @@ namespace SpectrumChart
     {
         private static readonly log4net.ILog log = log4net.LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
         private string ip;
+        private string localIP;
         private int udpPort;
         private ConcurrentQueue<float[]> dataQueue;
         private ConcurrentQueue<float[]> uiQueue;
@@ -33,8 +33,6 @@ namespace SpectrumChart
         private BackgroundWorker backgroundWorkerUpdateUI;
         private BackgroundWorker backgroundWorkerReceiveData;
         private UdpClient udpClient;
-        private UdpClient udpSendWave;
-        private TextBox textBoxLog;
         private IWindow window;
         private const int WindowSize = 2048;
         private Chart chart1;
@@ -48,18 +46,13 @@ namespace SpectrumChart
         private string database;
         private string deviceId;
 
-        private MessagePackSerializer serializer;
-
-        private string spectrumIP;
-        private int spectrumPort;
-
         private bool isUpdateChart;
         private bool isCalculateCableForce;
         private bool isSaveRawData;
         private string Tag;
         private double Threshold;
 
-        public ACT1228EarthQuake(string id, string ip, int port, Chart chart, string deviceType, string path, string database, TextBox tb,double threshold, StackExchange.Redis.ConnectionMultiplexer redis, string spectrumIP, int spectrumPort)
+        public ACT1228EarthQuake(string id, string ip, string localIP, int port, Chart chart, string deviceType, string path, string database, TextBox tb,double threshold, StackExchange.Redis.ConnectionMultiplexer redis)
         {
             this.Tag = ip + " : ";
             dataQueue = new ConcurrentQueue<float[]>();
@@ -79,8 +72,6 @@ namespace SpectrumChart
             backgroundWorkerReceiveData.WorkerSupportsCancellation = true;
             backgroundWorkerReceiveData.DoWork += BackgroundWorkerReceiveData_DoWork;
 
-            serializer = MessagePackSerializer.Get<AccWave>();
-
             hourTimer = new System.Timers.Timer(1000 * 60 * 60 * 1);
             hourTimer.Elapsed += new System.Timers.ElapsedEventHandler(HourTimer_TimesUp);
             hourTimer.AutoReset = true; //每到指定时间Elapsed事件是触发一次（false），还是一直触发（true）
@@ -91,15 +82,13 @@ namespace SpectrumChart
             window = RaisedCosineWindow.Hann(WindowSize);
 
             this.ip = ip;
+            this.localIP = localIP;
             this.deviceId = id;
             this.deviceType = deviceType;
             this.udpPort = port;
             this.chart1 = chart;
-            this.textBoxLog = tb;
             this.basePath = path;
             this.database = database;
-            this.spectrumIP = spectrumIP;
-            this.spectrumPort = spectrumPort;
             this.isUpdateChart = false;
             this.vibrateChannels = new Dictionary<int, VibrateChannel>();
 
@@ -133,28 +122,29 @@ namespace SpectrumChart
             }
         }
 
+        public override string GetIP()
+        {
+            return this.ip;
+        }
+
         public override void Start()
         {
-            udpClient = new UdpClient(udpPort);
-            //udpSendWave = new UdpClient("182.245.124.106", 9002);
+            IPEndPoint iPEndPoint = new IPEndPoint(IPAddress.Parse(this.localIP), this.udpPort);
+            udpClient = new UdpClient(iPEndPoint);
             backgroundWorkerUpdateUI.RunWorkerAsync();
             backgroundWorkerProcessData.RunWorkerAsync();
             backgroundWorkerReceiveData.RunWorkerAsync();
             //backgroundWorkerSaveRawData.RunWorkerAsync();
-            //hourTimer.Start();
-            //minuteTimer.Start();
             isSaveRawData = false;
         }
 
         public override void Stop()
         {
+            udpClient.Close();
             backgroundWorkerUpdateUI.CancelAsync();
             backgroundWorkerProcessData.CancelAsync();
             backgroundWorkerReceiveData.CancelAsync();
             //backgroundWorkerSaveRawData.CancelAsync();
-            udpClient.Close();
-            //udpSendWave.Close();
-            //hourTimer.Stop();
             isSaveRawData = false;
             minuteTimer.Start();
         }
@@ -170,12 +160,25 @@ namespace SpectrumChart
         {
             isSaveRawData = false;
             int numOfQueueCount = rawQueue.Count;
+            int historyQueueCount = historyQueue.Count;
+            string parent = Path.Combine(this.basePath, this.ip);
+            if (!Directory.Exists(parent))
+            {
+                Directory.CreateDirectory(parent);
+            }
+
+            if (numOfQueueCount == 0 || historyQueueCount == 0)
+            {
+                return;
+            }
+
             string line;
             string fileName = DateTime.Now.ToString("yyyy-MM-dd-HH-mm") + ".csv";
-            string pathString = Path.Combine(basePath, fileName);
+            string pathString = Path.Combine(parent, fileName);
             StreamWriter sw = new StreamWriter(pathString, true);
 
-            for (int i = 0; i < historyQueue.Count; i++)
+            
+            for (int i = 0; i < historyQueueCount; i++)
             {
                 bool success = historyQueue.TryDequeue(out line);
                 if (success)
@@ -254,17 +257,17 @@ namespace SpectrumChart
 
             //MessagePackSerializer serializer = MessagePackSerializer.Get<AccWave>();
 
-            if (textBoxLog.InvokeRequired)
-            {
-                textBoxLog.BeginInvoke(new MethodInvoker(() =>
-                {
-                    textBoxLog.AppendText("Start UI thread dequeue\r\n");
-                }));
-            }
-            else
-            {
-                textBoxLog.AppendText("Start UI thread dequeue\r\n");
-            }
+            //if (textBoxLog.InvokeRequired)
+            //{
+            //    textBoxLog.BeginInvoke(new MethodInvoker(() =>
+            //    {
+            //        textBoxLog.AppendText("Start UI thread dequeue\r\n");
+            //    }));
+            //}
+            //else
+            //{
+            //    textBoxLog.AppendText("Start UI thread dequeue\r\n");
+            //}
 
             while (true)
             {
@@ -290,7 +293,7 @@ namespace SpectrumChart
                 }
                 catch (Exception ex)
                 {
-                    textBoxLog.AppendText(ex.ToString());
+                    //textBoxLog.AppendText(ex.ToString());
                     if (bgWorker.CancellationPending == true)
                     {
                         e.Cancel = true;
@@ -366,20 +369,20 @@ namespace SpectrumChart
             return channel;
         }
 
-        private void AppendLog(string message)
-        {
-            if (textBoxLog.InvokeRequired)
-            {
-                textBoxLog.BeginInvoke(new MethodInvoker(() =>
-                {
-                    textBoxLog.AppendText(message + " \r\n");
-                }));
-            }
-            else
-            {
-                textBoxLog.AppendText(message + " \r\n");
-            }
-        }
+        //private void AppendLog(string message)
+        //{
+        //    if (textBoxLog.InvokeRequired)
+        //    {
+        //        textBoxLog.BeginInvoke(new MethodInvoker(() =>
+        //        {
+        //            textBoxLog.AppendText(message + " \r\n");
+        //        }));
+        //    }
+        //    else
+        //    {
+        //        textBoxLog.AppendText(message + " \r\n");
+        //    }
+        //}
 
         private float ACT12816ExtractChannel(byte higher, byte lower)
         {
@@ -437,7 +440,7 @@ namespace SpectrumChart
                     else
                     {
                         historyQueue.Enqueue(sb.ToString());
-                        if(historyQueue.Count > 6000)
+                        if(historyQueue.Count > 6000*2)
                         {
                             string item;
                             historyQueue.TryDequeue(out item);
@@ -585,10 +588,6 @@ namespace SpectrumChart
 
             string content = stamp + ",";
 
-            IPAddress remoteIp = IPAddress.Parse(this.spectrumIP);
-            IPEndPoint remoteEndPoint = new IPEndPoint(remoteIp, spectrumPort);
-            UdpClient udpClient = new UdpClient();
-
             for (int i = 0; i < signal.Channels; i++)
             {
                 //complexChannels[i] = signal.GetChannel(i);
@@ -611,9 +610,9 @@ namespace SpectrumChart
                     VibrateChannel vc = vibrateChannels[i + 1];
                     float[] floatList = power[i].Select(x => (float)x).ToArray();
                     AccWave awObject = new AccWave(vc.SensorId, "028", floatList);
-                    byte[] result = serializer.PackSingleObject(awObject);
+                    //byte[] result = serializer.PackSingleObject(awObject);
                     //AppendLog(this.ip + " Frame Length: " + result.Length.ToString());
-                    udpClient.Send(result, result.Length, remoteEndPoint);
+                    //udpClient.Send(result, result.Length, remoteEndPoint);
                     //udpClient.Close();
                 }
 

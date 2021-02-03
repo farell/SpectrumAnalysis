@@ -38,6 +38,7 @@ namespace SpectrumChart
         private ConnectionMultiplexer redis;
 
         private bool saveDataSuccess;
+        private bool isStarted;
 
         public string databaseIp;
         public string databaseUser;
@@ -73,34 +74,19 @@ namespace SpectrumChart
 
             vact = null;
             saveDataSuccess = false;
-            buttonStop.Enabled = false;
+            isStarted = false;
+            ToolStripMenuItemStart.Enabled = true;
+            ToolStripMenuItemStop.Enabled = false;
         }
 
 
         private void LoadDevices()
         {
-            //string SpectrumIP = ConfigurationManager.AppSettings["SpectrumIP"];
-            //string SpectrumPortSetting = ConfigurationManager.AppSettings["SpectrumPort"];
-            string SpectrumIP = "";
-            int SpectrumPort = 0;
-
             this.deviceList.Clear();
             using (SQLiteConnection connection = new SQLiteConnection(database))
             {
                 connection.Open();
-
-                string sqlStatement = "select SpectrumIP,SpectrumPort from SpectrumConfig";
-                SQLiteCommand command1 = new SQLiteCommand(sqlStatement, connection);
-                using (SQLiteDataReader reader2 = command1.ExecuteReader())
-                {
-                    while (reader2.Read())
-                    {
-                        SpectrumIP = reader2.GetString(0);
-                        SpectrumPort = reader2.GetInt32(1);
-                    }
-                }
-
-                string strainStatement = "select RemoteIP,LocalPort,DeviceId,Type,Desc,Path,IsCalculateForce,Threshold from SensorInfo";
+                string strainStatement = "select RemoteIP,LocalPort,DeviceId,Type,Desc,Path,IsCalculateForce,Threshold,LocalIP from SensorInfo";
                 SQLiteCommand command2 = new SQLiteCommand(strainStatement, connection);
                 using (SQLiteDataReader reader = command2.ExecuteReader())
                 {
@@ -114,39 +100,38 @@ namespace SpectrumChart
                         string path = reader.GetString(5);
                         bool isCalculateForce = bool.Parse(reader.GetString(6));
                         double threshold = reader.GetDouble(7);
-                        //int index = this.dataGridView1.Rows.Add();
+                        string loclaIP = reader.GetString(8);
 
-                        string[] itemString = { description, type, deviceId, remoteIP, localPort.ToString(),path };
+                        string[] itemString = { description, type, deviceId, remoteIP, localPort.ToString(),path ,loclaIP};
                         ListViewItem item = new ListViewItem(itemString);
+                        item.Checked = true;
 
                         listView1.Items.Add(item);
-
-                         //config = new SerialACT4238Config(portName, baudrate, timeout, deviceId, type);
 
                         ACT12x device = null;
 
                         if(type == "ACT1228CableForce")
                         {
-                            device = new ACT1228CableForce(deviceId, remoteIP, localPort, chart1, type, path, this.database, textBoxLog, threshold, redis, SpectrumIP, SpectrumPort);
+                            device = new ACT1228CableForce(deviceId, remoteIP, loclaIP, localPort, chart1, type, path, this.database, textBoxLog, threshold, redis);
                         }else if(type == "ACT12816Vibrate")
                         {
-                            device = new ACT12816Vibrate(deviceId, remoteIP, localPort, chart1, type, path, this.database, textBoxLog, threshold, redis, SpectrumIP, SpectrumPort);
+                            device = new ACT12816Vibrate(deviceId, remoteIP, loclaIP, localPort, chart1, type, path, this.database, textBoxLog, threshold, redis);
                         }
                         else if (type == "ACT1228EarthQuake")
                         {
-                            device = new ACT1228EarthQuake(deviceId, remoteIP, localPort, chart1, type, path, this.database, textBoxLog, threshold, redis, SpectrumIP, SpectrumPort);
+                            device = new ACT1228EarthQuake(deviceId, remoteIP, loclaIP, localPort, chart1, type, path, this.database, textBoxLog, threshold, redis);
                         }
                         else if (type == "ACT1228Vibrate")
                         {
-                            device = new ACT1228Vibrate(deviceId, remoteIP, localPort, chart1, type, path, this.database, textBoxLog, threshold, redis, SpectrumIP, SpectrumPort);
+                            device = new ACT1228Vibrate(deviceId, remoteIP, loclaIP, localPort, chart1, type, path, this.database, textBoxLog, threshold, redis);
                         }
                         else if (type == "ACT1228CableForceV4")
                         {
-                            device = new ACT1228CableForceV4(deviceId, remoteIP, localPort, chart1, type, path, this.database, textBoxLog, threshold, redis, SpectrumIP, SpectrumPort);
+                            device = new ACT1228CableForceV4(deviceId, remoteIP, loclaIP, localPort, chart1, type, path, this.database, textBoxLog, threshold, redis);
                         }
                         else if(type == "ACT1228VibrateV4")
                         {
-                            device = new ACT1228VibrateV4(deviceId, remoteIP, localPort, chart1, type, path, this.database, textBoxLog, threshold, redis, SpectrumIP, SpectrumPort);
+                            device = new ACT1228VibrateV4(deviceId, remoteIP, loclaIP, localPort, chart1, type, path, this.database, textBoxLog, threshold, redis);
                         }else
                         {
 
@@ -165,7 +150,6 @@ namespace SpectrumChart
                 {
                     while (reader2.Read())
                     {
-                        //string  groupId = reader.GetString(0);
                         databaseIp = reader2.GetString(0);
                         databaseUser = reader2.GetString(1);
                         databasePwd = reader2.GetString(2);
@@ -183,117 +167,81 @@ namespace SpectrumChart
             if (listView1.SelectedIndices != null && listView1.SelectedIndices.Count > 0)
             {
                 ListView.SelectedIndexCollection c = listView1.SelectedIndices;
-                //textBoxId.Text = listView1.Items[c[0]].SubItems[3].Text;
-                //textBoxPort.Text = listView1.Items[c[0]].SubItems[4].Text;
 
+                List<string> checkedIndices = new List<string>();
+                foreach (ListViewItem item in listView1.CheckedItems)
+                {
+                    checkedIndices.Add(item.SubItems[3].Text);
+                }
+                string tag = listView1.Items[c[0]].SubItems[3].Text;
+                if (!checkedIndices.Contains(tag))
+                {
+                    return;
+                }
+                
                 chart1.Titles[0].Text = listView1.Items[c[0]].SubItems[0].Text;
-                //chart1.Titles.Add(listView1.Items[c[0]].SubItems[0].Text);
 
                 string key = listView1.Items[c[0]].SubItems[2].Text;
 
                 if (deviceList.ContainsKey(key))
                 {
-                    //textBoxLog.AppendText("deviceList contains key:" + key + "\r\n");
                     if (vact == null)
                     {
                         vact = deviceList[key];
                         vact.SetUpdateChart(true);
-                        //textBoxLog.AppendText("vact is null\r\n");
                     }
                     else
                     {
                         vact.SetUpdateChart(false);
                         vact = deviceList[key];
                         vact.SetUpdateChart(true);
-                        //textBoxLog.AppendText("vact is not null\r\n");
                     }
                 }
 
-            }
-        }
-
-        private void BackgroundWorkerUpdateUI_DoWork(object sender, DoWorkEventArgs e)
-        {
-            BackgroundWorker bgWorker = sender as BackgroundWorker;
-
-            int numberOfPointsInChart = 200;
-            //MessagePackSerializer serializer = MessagePackSerializer.Get<AccWave>();
-            //UdpClient udpClient = null;
-            //IPAddress remoteIp = IPAddress.Parse("192.168.100.31");
-            //try
-            //{
-            //    udpClient = new UdpClient();
-            //    udpClient.Connect("192.168.100.31", 26660);
-            //}
-            //catch (Exception ex)
-            //{
-            //    Console.WriteLine(ex.ToString());
-            //}
-            while (true)
-            {
-                try
-                {
-                    float[] data;
-                    
-                    
-                    if (bgWorker.CancellationPending == true)
-                    {
-                        e.Cancel = true;
-                        break;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    //Console.WriteLine(ex.ToString());
-                    if (bgWorker.CancellationPending == true)
-                    {
-                        e.Cancel = true;
-                        break;
-                    }
-                }
-            }
-        }
-
-        /// <summary>
-        /// 写记录
-        /// </summary>
-        /// <param name="str"></param>
-        private void AppendRecord(string str)
-        {
-            //if (!Directory.Exists("ErrLog"))
-            //{
-            //    Directory.CreateDirectory("ErrLog");
-            //}
-            string currentDate = DateTime.Now.ToString("yyyy-MM-dd") + ".txt";
-
-            string pathString = Path.Combine(@"D:\vibrate", currentDate);
-
-            using (StreamWriter sw = new StreamWriter(pathString, true))
-            {
-                sw.WriteLine(str);
-                sw.Close();
             }
         }
 
         public void Start()
         {
-            buttonStart.Enabled = false;
-            buttonStop.Enabled = true;
-            backgroundWorkerSaveData.RunWorkerAsync();
+            ToolStripMenuItemStart.Enabled = false;
+            ToolStripMenuItemStop.Enabled = true;
+            //buttonStart.Enabled = false;
+            //buttonStop.Enabled = true;
+            isStarted = true;
+            List<string> checkedIndices = new List<string>();
+            foreach (ListViewItem item in listView1.CheckedItems)
+            {
+                checkedIndices.Add(item.SubItems[3].Text);
+            }
             foreach (ACT12x va in deviceList.Values)
             {
-                va.Start();
+                string ip = va.GetIP();
+                if (checkedIndices.Contains(ip))
+                {
+                    va.Start();
+                }
             }
         }
 
         public void Stop()
         {
-            buttonStart.Enabled = true;
-            buttonStop.Enabled = false;
-            backgroundWorkerSaveData.CancelAsync();
+            ToolStripMenuItemStart.Enabled = true;
+            ToolStripMenuItemStop.Enabled = false;
+            //buttonStart.Enabled = true;
+            //buttonStop.Enabled = false;
+            isStarted = false;
+            List<string> checkedIndices = new List<string>();
+            foreach (ListViewItem item in listView1.CheckedItems)
+            {
+                checkedIndices.Add(item.SubItems[3].Text);
+            }
             foreach (ACT12x va in deviceList.Values)
             {
-                va.Stop();
+                string ip = va.GetIP();
+                if (checkedIndices.Contains(ip))
+                {
+                    va.Stop();
+                }
             }
         }
 
@@ -334,9 +282,7 @@ namespace SpectrumChart
                 return;
             }
         }
-
-
-
+        
         private void RestoreToolStripMenuItem_Click(object sender, EventArgs e)
         {
             this.Visible = true;
@@ -349,6 +295,10 @@ namespace SpectrumChart
         {
             if (MessageBox.Show("确定要退出？", "系统提示", MessageBoxButtons.YesNo, MessageBoxIcon.Information, MessageBoxDefaultButton.Button1) == DialogResult.Yes)
             {
+                if (isStarted)
+                {
+                    this.Stop();
+                }
                 this.notifyIcon1.Visible = false;
                 this.Close();
                 this.Dispose();
@@ -369,30 +319,6 @@ namespace SpectrumChart
                 this.WindowState = FormWindowState.Normal;
                 this.Activate();
             }
-        }
-
-        private void button1_Click(object sender, EventArgs e)
-        {
-            UdpClient udpClient = null;
-            IPAddress remoteIp = IPAddress.Parse("112.112.16.144");
-            try
-            {
-                udpClient = new UdpClient();
-                udpClient.Connect(remoteIp, 26668);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine(ex.ToString());
-            }
-
-            //MessagePackSerializer serializer = MessagePackSerializer.Get<AccWave>();
-
-            //AccWave aw = new AccWave("123", "acc", new float[] { 12.1F, 12.5F, 44.6F });
-            //string result = JsonConvert.SerializeObject(aw);
-            //udpClient.Send(result, result.Length);
-
-            MessageBox.Show("Finished");
-
         }
 
         private void buttonTest_Click(object sender, EventArgs e)
@@ -427,17 +353,17 @@ namespace SpectrumChart
 
         private void AppendLog(string message)
         {
-            if (textBoxLog.InvokeRequired)
-            {
-                textBoxLog.BeginInvoke(new MethodInvoker(() =>
-                {
-                    textBoxLog.AppendText(message + " \r\n");
-                }));
-            }
-            else
-            {
-                textBoxLog.AppendText(message + " \r\n");
-            }
+            //if (textBoxLog.InvokeRequired)
+            //{
+            //    textBoxLog.BeginInvoke(new MethodInvoker(() =>
+            //    {
+            //        textBoxLog.AppendText(message + " \r\n");
+            //    }));
+            //}
+            //else
+            //{
+            //    textBoxLog.AppendText(message + " \r\n");
+            //}
         }
 
         private void BackgroundWorkerSaveData_DoWork(object sender, DoWorkEventArgs e)
@@ -539,17 +465,17 @@ namespace SpectrumChart
             catch (Exception ex)
             {
                 saveDataSuccess = false;
-                if (textBoxLog.InvokeRequired)
-                {
-                    textBoxLog.BeginInvoke(new MethodInvoker(() =>
-                    {
-                        textBoxLog.AppendText(ex.Message + "\r\n");
-                    }));
-                }
-                else
-                {
-                    textBoxLog.AppendText(ex.Message + "\r\n");
-                }
+                //if (textBoxLog.InvokeRequired)
+                //{
+                //    textBoxLog.BeginInvoke(new MethodInvoker(() =>
+                //    {
+                //        textBoxLog.AppendText(ex.Message + "\r\n");
+                //    }));
+                //}
+                //else
+                //{
+                //    textBoxLog.AppendText(ex.Message + "\r\n");
+                //}
             }
         }
 
@@ -557,6 +483,16 @@ namespace SpectrumChart
         {
             DatabaseConfig dlg = new DatabaseConfig(this);
             dlg.ShowDialog();
+        }
+
+        private void ToolStripMenuItemStart_Click(object sender, EventArgs e)
+        {
+            Start();
+        }
+
+        private void ToolStripMenuItemStop_Click(object sender, EventArgs e)
+        {
+            Stop();
         }
     }
 

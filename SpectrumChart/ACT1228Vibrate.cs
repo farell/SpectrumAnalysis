@@ -15,7 +15,6 @@ using System.Threading;
 using System.Windows.Forms;
 using System.Windows.Forms.DataVisualization.Charting;
 using System.Data.SQLite;
-using MsgPack.Serialization;
 
 namespace SpectrumChart
 {
@@ -24,6 +23,7 @@ namespace SpectrumChart
 
         private static readonly log4net.ILog log = log4net.LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
         private string ip;
+        private string localIP;
         private int udpPort;
         private ConcurrentQueue<float[]> dataQueue;
         private ConcurrentQueue<float[]> uiQueue;
@@ -51,8 +51,6 @@ namespace SpectrumChart
         private string database;
         private string deviceId;
 
-        private MessagePackSerializer serializer;
-
         private string spectrumIP;
         private int spectrumPort;
 
@@ -61,7 +59,7 @@ namespace SpectrumChart
         private bool isSaveRawData;
         private string Tag; 
 
-        public ACT1228Vibrate(string id, string ip, int port, Chart chart, string deviceType, string path, string database, TextBox tb, double threshold, StackExchange.Redis.ConnectionMultiplexer redis, string spectrumIP, int spectrumPort)
+        public ACT1228Vibrate(string id, string ip, string localIP, int port, Chart chart, string deviceType, string path, string database, TextBox tb, double threshold, StackExchange.Redis.ConnectionMultiplexer redis)
         {
             this.Tag = ip + " : ";
             dataQueue = new ConcurrentQueue<float[]>();
@@ -69,8 +67,6 @@ namespace SpectrumChart
             waveQueue = new ConcurrentQueue<float[]>();
             rawQueue = new ConcurrentQueue<string>();
             Threshold = threshold;
-
-            serializer  = MessagePackSerializer.Get<AccWave>();
 
             backgroundWorkerProcessData = new BackgroundWorker();
             backgroundWorkerReceiveData = new BackgroundWorker();
@@ -99,6 +95,7 @@ namespace SpectrumChart
             window = RaisedCosineWindow.Hann(WindowSize);
 
             this.ip = ip;
+            this.localIP = localIP;
             this.deviceId = id;
             this.deviceType = deviceType;
             this.udpPort = port;
@@ -106,8 +103,6 @@ namespace SpectrumChart
             this.textBoxLog = tb;
             this.basePath = path;
             this.database = database;
-            this.spectrumIP = spectrumIP;
-            this.spectrumPort = spectrumPort;
             this.isUpdateChart = false;
             this.vibrateChannels = new Dictionary<int, VibrateChannel>();
 
@@ -146,10 +141,15 @@ namespace SpectrumChart
             return result;
         }
 
+        public override string GetIP()
+        {
+            return this.ip;
+        }
+
         public override void Start()
         {
-            udpClient = new UdpClient(udpPort);
-            //udpSendWave = new UdpClient("182.245.124.106", 9002);
+            IPEndPoint iPEndPoint = new IPEndPoint(IPAddress.Parse(this.localIP), this.udpPort);
+            udpClient = new UdpClient(iPEndPoint);
             backgroundWorkerUpdateUI.RunWorkerAsync();
             backgroundWorkerProcessData.RunWorkerAsync();
             backgroundWorkerReceiveData.RunWorkerAsync();
@@ -161,12 +161,11 @@ namespace SpectrumChart
 
         public override void Stop()
         {
+            udpClient.Close();
             backgroundWorkerUpdateUI.CancelAsync();
             backgroundWorkerProcessData.CancelAsync();
             backgroundWorkerReceiveData.CancelAsync();
             //backgroundWorkerSendWave.CancelAsync();
-            udpClient.Close();
-            //udpSendWave.Close();
             hourTimer.Stop();
         }
 
@@ -181,9 +180,18 @@ namespace SpectrumChart
         {
             isSaveRawData = false;
 
+            string parent = Path.Combine(this.basePath, this.ip);
+            if (!Directory.Exists(parent))
+            {
+                Directory.CreateDirectory(parent);
+            }
+            if (rawQueue.Count == 0)
+            {
+                return;
+            }
             string line;
             string fileName = DateTime.Now.ToString("yyyy-MM-dd-HH-mm") + ".csv";
-            string pathString = Path.Combine(basePath, fileName);
+            string pathString = Path.Combine(parent, fileName);
             StreamWriter sw = new StreamWriter(pathString, true);
 
             for (int i = 0; i < rawQueue.Count; i++)
@@ -284,8 +292,8 @@ namespace SpectrumChart
                                 if (vibrateChannels.ContainsKey(k + 1))
                                 {
                                     AccWave awObject = new AccWave(vibrateChannels[k + 1].SensorId, "016", wave[k]);
-                                    byte[] result = serializer.PackSingleObject(awObject);
-                                    udpClient.Send(result, result.Length, remoteEndPoint);
+                                    //byte[] result = serializer.PackSingleObject(awObject);
+                                    //udpClient.Send(result, result.Length, remoteEndPoint);
                                 }
                             }
                             udpClient.Close();
@@ -633,9 +641,9 @@ namespace SpectrumChart
                     VibrateChannel vc = vibrateChannels[i + 1];
                     float[] floatList = power[i].Select(x => (float)x).ToArray();
                     AccWave awObject = new AccWave(vc.SensorId, "028", floatList);
-                    byte[] result = serializer.PackSingleObject(awObject);
-                    //AppendLog(this.ip + " Frame Length: " + result.Length.ToString());
-                    udpClient.Send(result, result.Length, remoteEndPoint);
+                    //byte[] result = serializer.PackSingleObject(awObject);
+                    ////AppendLog(this.ip + " Frame Length: " + result.Length.ToString());
+                    //udpClient.Send(result, result.Length, remoteEndPoint);
                     //udpClient.Close();
                 }
 

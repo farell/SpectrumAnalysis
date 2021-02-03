@@ -15,7 +15,6 @@ using System.Threading;
 using System.Windows.Forms;
 using System.Windows.Forms.DataVisualization.Charting;
 using System.Data.SQLite;
-using MsgPack.Serialization;
 
 namespace SpectrumChart
 {
@@ -37,17 +36,16 @@ namespace SpectrumChart
     {
         private static readonly log4net.ILog log = log4net.LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
         private string ip;
+        private string localIP;
         private int udpPort;
         private ConcurrentQueue<float[]> dataQueue;
         private ConcurrentQueue<float[]> uiQueue;
         private ConcurrentQueue<string> rawQueue;
         private double Threshold;
-        private ConcurrentQueue<DataValue> resultQueue;
         private BackgroundWorker backgroundWorkerProcessData;
         private BackgroundWorker backgroundWorkerUpdateUI;
         private BackgroundWorker backgroundWorkerReceiveData;
         private UdpClient udpClient;
-        private UdpClient udpSendWave;
         private TextBox textBoxLog;
         private IWindow window;
         private const int WindowSize = 4096;
@@ -62,17 +60,12 @@ namespace SpectrumChart
         private string database;
         private string deviceId;
 
-        private MessagePackSerializer serializer;
-
-        private string spectrumIP;
-        private int spectrumPort;
-
         private bool isUpdateChart;
         private bool isCalculateCableForce;
         private bool isSaveRawData;
         private string Tag;
 
-        public ACT12816Vibrate(string id, string ip, int port, Chart chart, string deviceType, string path, string database, TextBox tb, double threshold, StackExchange.Redis.ConnectionMultiplexer redis, string spectrumIP, int  spectrumPort)
+        public ACT12816Vibrate(string id, string ip, string localIP, int port, Chart chart, string deviceType, string path, string database, TextBox tb, double threshold, StackExchange.Redis.ConnectionMultiplexer redis)
         {
             this.Tag = ip + " : ";
             dataQueue = new ConcurrentQueue<float[]>();
@@ -91,8 +84,6 @@ namespace SpectrumChart
             backgroundWorkerReceiveData.WorkerSupportsCancellation = true;
             backgroundWorkerReceiveData.DoWork += BackgroundWorkerReceiveData_DoWork;
 
-            serializer = MessagePackSerializer.Get<AccWave>();
-
             hourTimer = new System.Timers.Timer(1000 * 60 * 60 * 1);
             hourTimer.Elapsed += new System.Timers.ElapsedEventHandler(HourTimer_TimesUp);
             hourTimer.AutoReset = true; //每到指定时间Elapsed事件是触发一次（false），还是一直触发（true）
@@ -103,6 +94,7 @@ namespace SpectrumChart
             window = RaisedCosineWindow.Hann(WindowSize);
 
             this.ip = ip;
+            this.localIP = localIP;
             this.deviceId = id;
             this.deviceType = deviceType;
             this.udpPort = port;
@@ -110,8 +102,6 @@ namespace SpectrumChart
             this.textBoxLog = tb;
             this.basePath = path;
             this.database = database;
-            this.spectrumIP = spectrumIP;
-            this.spectrumPort = spectrumPort;
             this.isUpdateChart = false;
             this.vibrateChannels = new Dictionary<int, VibrateChannel>();
             this.isSaveRawData = true;
@@ -158,9 +148,20 @@ namespace SpectrumChart
         private void MinuteTimer_TimesUp(object sender, System.Timers.ElapsedEventArgs e)
         {
             isSaveRawData = false;
+            string parent = Path.Combine(this.basePath, this.ip);
+            if (!Directory.Exists(parent))
+            {
+                Directory.CreateDirectory(parent);
+            }
+
+            if(rawQueue.Count == 0)
+            {
+                return;
+            }
+
             string line;
             string fileName = DateTime.Now.ToString("yyyy-MM-dd-HH-mm") + ".csv";
-            string pathString = Path.Combine(basePath, fileName);
+            string pathString = Path.Combine(parent, fileName);
             StreamWriter sw = new StreamWriter(pathString, true);
 
             for (int i = 0; i < rawQueue.Count; i++)
@@ -175,10 +176,15 @@ namespace SpectrumChart
             sw.Close();
         }
 
+        public override string GetIP()
+        {
+            return this.ip;
+        }
+
         public override void Start()
         {
-            udpClient = new UdpClient(udpPort);
-            //udpSendWave = new UdpClient("182.245.124.106", 9002);
+            IPEndPoint iPEndPoint = new IPEndPoint(IPAddress.Parse(this.localIP), this.udpPort);
+            udpClient = new UdpClient(iPEndPoint);
             backgroundWorkerUpdateUI.RunWorkerAsync();
             backgroundWorkerProcessData.RunWorkerAsync();
             backgroundWorkerReceiveData.RunWorkerAsync();
@@ -190,12 +196,11 @@ namespace SpectrumChart
 
         public override void Stop()
         {
+            udpClient.Close();
             backgroundWorkerUpdateUI.CancelAsync();
             backgroundWorkerProcessData.CancelAsync();
             backgroundWorkerReceiveData.CancelAsync();
             //backgroundWorkerSaveRawData.CancelAsync();
-            udpClient.Close();
-            //udpSendWave.Close();
             hourTimer.Stop();
         }
 
@@ -537,10 +542,6 @@ namespace SpectrumChart
 
             string content = stamp + ",";
 
-            IPAddress remoteIp = IPAddress.Parse(this.spectrumIP);
-            IPEndPoint remoteEndPoint = new IPEndPoint(remoteIp, spectrumPort);
-            UdpClient udpClient = new UdpClient();
-
             for (int i = 0; i < signal.Channels; i++)
             {
                 //complexChannels[i] = signal.GetChannel(i);
@@ -714,21 +715,17 @@ namespace SpectrumChart
         /// <param name="str"></param>
         private void AppendRecord(StringBuilder sb, string fileName)
         {
-            //if (!Directory.Exists("ErrLog"))
-            //{
-            //    Directory.CreateDirectory("ErrLog");
-            //}
-            //string currentDate = DateTime.Now.ToString("yyyy-MM-dd") + ".txt";
-
+            string parent = Path.Combine(this.basePath, this.ip);
+            if (!Directory.Exists(parent))
+            {
+                Directory.CreateDirectory(parent);
+            }
             string currentDate = fileName + ".csv";
-
-            string pathString = Path.Combine(this.basePath, currentDate);
+            string pathString = Path.Combine(parent, currentDate);
 
             using (StreamWriter sw = new StreamWriter(pathString, true))
             {
-                //StringBuilder sb = new StringBuilder(20);
                 sw.Write(sb);
-                //sw.WriteLine(sb);
                 sw.Close();
             }
         }
